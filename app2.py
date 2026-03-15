@@ -6,14 +6,46 @@ import time
 from PIL import Image
 from google import genai
 
-# --- API KEYS ---
-GEMINI_API_KEY = "AIzaSyByo79Aj8Ofg0JQNHBExHpuykGgJ9xSz0s"
-HF_API_KEY = "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"
-
 # --- CONFIGURATION ---
 st.set_page_config(page_title="The Pitch Visualizer", page_icon="🖼️", layout="wide")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+# --- SIDEBAR: API KEY INPUTS ---
+st.sidebar.title("🔑 API Keys")
+st.sidebar.markdown("Your keys are used only in this session and never stored.")
+
+GEMINI_API_KEY = st.sidebar.text_input(
+    "Google Gemini API Key",
+    type="password",
+    placeholder="AIza...",
+    help="Get your free key at aistudio.google.com"
+)
+
+HF_API_KEY = st.sidebar.text_input(
+    "Hugging Face Token",
+    type="password",
+    placeholder="hf_...",
+    help="Get your free token at huggingface.co/settings/tokens"
+)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    "**How to get keys (both free):**\n\n"
+    "🔹 [Gemini API Key](https://aistudio.google.com/) → Get API Key\n\n"
+    "🔹 [HuggingFace Token](https://huggingface.co/settings/tokens) → New Token → enable *Inference Providers*"
+)
+st.sidebar.markdown("---")
+
+keys_ready = bool(GEMINI_API_KEY and HF_API_KEY)
+
+# --- ONLY INIT CLIENT IF KEY IS PROVIDED ---
+client = None
+if GEMINI_API_KEY:
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        st.sidebar.error(f"Gemini key error: {e}")
+
+HF_API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
 
 
 def get_available_model():
@@ -30,11 +62,8 @@ def get_available_model():
         return "gemini-1.5-flash"
 
 
-HF_API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
-hf_headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-
-
 def query_image_gen(prompt):
+    hf_headers = {"Authorization": f"Bearer {HF_API_KEY}"}
     payload = {
         "inputs": prompt,
         "parameters": {
@@ -139,9 +168,7 @@ def get_consistent_storyboard(text_input, style_choice, model_name):
 
 # --- SESSION STATE INIT ---
 if 'gemini_model' not in st.session_state:
-    with st.spinner("Checking available Gemini models..."):
-        st.session_state.gemini_model = get_available_model()
-
+    st.session_state.gemini_model = None
 if 'scenes' not in st.session_state:
     st.session_state.scenes = []
 if 'images' not in st.session_state:
@@ -150,13 +177,27 @@ if 'visual_anchor' not in st.session_state:
     st.session_state.visual_anchor = ""
 if 'current_slide' not in st.session_state:
     st.session_state.current_slide = 0
+if 'last_gemini_key' not in st.session_state:
+    st.session_state.last_gemini_key = ""
 
 
-# --- UI ---
+# --- MAIN UI ---
 st.title("🖼️ The Pitch Visualizer")
 st.markdown("Transform your narrative into a visual storyboard.")
 
-st.sidebar.success(f"Using Model: {st.session_state.gemini_model}")
+# Gate the app behind key entry
+if not keys_ready:
+    st.info("👈 Please enter your **Gemini API Key** and **Hugging Face Token** in the sidebar to get started.")
+    st.stop()
+
+# Detect model when key is first entered or changes
+if client and (st.session_state.gemini_model is None or st.session_state.last_gemini_key != GEMINI_API_KEY):
+    with st.spinner("Validating Gemini key and checking available models..."):
+        st.session_state.gemini_model = get_available_model()
+        st.session_state.last_gemini_key = GEMINI_API_KEY
+
+st.sidebar.success(f"✅ Model: {st.session_state.gemini_model}")
+
 style = st.sidebar.selectbox("Art Style", ["Cinematic", "Digital Art", "Studio Ghibli", "Cyberpunk", "Oil Painting"])
 user_text = st.text_area("Paste your story (3-5 sentences):", height=150)
 
@@ -165,7 +206,6 @@ if st.button("Generate Storyboard", type="primary"):
         st.warning("Please enter text.")
     else:
         try:
-            # Reset state
             st.session_state.scenes = []
             st.session_state.images = []
             st.session_state.current_slide = 0
@@ -175,7 +215,6 @@ if st.button("Generate Storyboard", type="primary"):
                 st.session_state.scenes = data.get("scenes", [])
                 st.session_state.visual_anchor = data.get("visual_anchor", "")
 
-            # Generate all images and store as bytes
             for i, scene in enumerate(st.session_state.scenes):
                 with st.spinner(f"Generating image {i + 1} of {len(st.session_state.scenes)}..."):
                     final_prompt = f"{scene['visual_prompt']}, masterpiece, best quality, ultra detailed, 8k"
@@ -198,24 +237,20 @@ if st.session_state.scenes and st.session_state.images:
     total = len(st.session_state.scenes)
     idx = st.session_state.current_slide
 
-    # Slide counter
     st.markdown(
         f"<h4 style='text-align:center; color:gray;'>Scene {idx + 1} of {total}</h4>",
         unsafe_allow_html=True
     )
 
-    # --- Image ---
     img_bytes = st.session_state.images[idx]
     if img_bytes:
         image = Image.open(io.BytesIO(img_bytes))
-        # Center the image with padding
         _, img_col, _ = st.columns([0.5, 9, 0.5])
         with img_col:
             st.image(image, use_container_width=True)
     else:
         st.warning("Image could not be generated for this scene.")
 
-    # --- Caption ---
     st.markdown(
         f"<p style='text-align:center; font-size:18px; padding: 12px 40px;'>"
         f"💬 {st.session_state.scenes[idx]['segment']}"
@@ -223,15 +258,13 @@ if st.session_state.scenes and st.session_state.images:
         unsafe_allow_html=True
     )
 
-    # --- Image Prompt Dropdown ---
     _, drop_col, _ = st.columns([1, 4, 1])
     with drop_col:
         with st.expander("🔍 View Image Prompt"):
             st.caption(st.session_state.scenes[idx]['visual_prompt'])
 
-    st.write("")  # spacing
+    st.write("")
 
-    # --- Navigation Arrows ---
     left_col, mid_col, right_col = st.columns([1, 3, 1])
 
     with left_col:
@@ -240,13 +273,9 @@ if st.session_state.scenes and st.session_state.images:
             st.rerun()
 
     with mid_col:
-        # Dot indicators
         dots = ""
         for d in range(total):
-            if d == idx:
-                dots += "🔵 "
-            else:
-                dots += "⚪ "
+            dots += "🔵 " if d == idx else "⚪ "
         st.markdown(
             f"<p style='text-align:center; font-size:20px; padding-top:6px;'>{dots}</p>",
             unsafe_allow_html=True
