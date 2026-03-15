@@ -1,5 +1,5 @@
 # Pitch-Visualizer
-Transform text pitches into AI-generated visual storyboards using Gemini and Stable Diffusion.
+Transform text pitches into AI-generated visual storyboards using Gemini and Stable Diffusion. https://pitch-visualizer.streamlit.app/
 
 # 🖼️ The Pitch Visualizer
 
